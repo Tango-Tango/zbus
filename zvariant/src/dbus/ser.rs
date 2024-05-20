@@ -145,6 +145,11 @@ macro_rules! serialize_basic {
     ($method:ident($type:ty) $write_method:ident($as:ty)) => {
         fn $method(self, v: $type) -> Result<()> {
             match self.parsed_signature.next() {
+                Some(SignatureEntry::Variant) => {
+                    let value = zvariant::to_value(&v)?;
+                    let _ = self.inner_variant_value(SignatureEntry::Variant, &value)?;
+                    Ok(())
+                }
                 Some(signature) => {
                     if signature.matches::<$type>() {
                         let alignment = <$type>::alignment(Format::DBus);
@@ -187,6 +192,11 @@ where
 
     fn serialize_i32(self, v: i32) -> Result<()> {
         match self.parsed_signature.next() {
+            Some(SignatureEntry::Variant) => {
+                let value = zvariant::to_value(&v)?;
+                let _ = self.inner_variant_value(SignatureEntry::Variant, &value)?;
+                Ok(())
+            }
             Some(SignatureEntry::I32) => {
                 self.common.add_padding(i32::alignment(Format::DBus))?;
                 self.common
@@ -210,6 +220,12 @@ where
 
     fn serialize_u8(self, v: u8) -> Result<()> {
         match self.parsed_signature.next() {
+            Some(SignatureEntry::Variant) => {
+                let value = zvariant::to_value(&v)?;
+                let _ = self.inner_variant_value(SignatureEntry::Variant, &value)?;
+                Ok(())
+            }
+
             Some(SignatureEntry::U8) => {
                 self.common.add_padding(u8::alignment(Format::DBus))?;
                 self.common
@@ -246,6 +262,12 @@ where
 
         // Write the length field based on signature type
         match self.parsed_signature.next() {
+            Some(SignatureEntry::Variant) => {
+                let value = zvariant::to_value(&v)?;
+                let _ = self.inner_variant_value(SignatureEntry::Variant, &value)?;
+                return Ok(());
+            }
+
             Some(SignatureEntry::ObjectPath) | Some(SignatureEntry::Str) => {
                 self.common.add_padding(<&str>::alignment(Format::DBus))?;
                 self.common
@@ -336,6 +358,11 @@ where
         variant: &'static str,
     ) -> Result<()> {
         match self.parsed_signature.next() {
+            Some(SignatureEntry::Variant) => {
+                let value = zvariant::to_value(&variant_index)?;
+                let _ = self.inner_variant_value(SignatureEntry::Variant, &value)?;
+                Ok(())
+            }
             Some(SignatureEntry::Str) => {
                 let _ = self.inner_value_samedepth(SignatureEntry::Str, variant)?;
                 Ok(())

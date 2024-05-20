@@ -18,7 +18,7 @@ use crate::{
     serialized::{Context, Format},
     utils::*,
     value::parsed_signature::{ParsedSignature, SignatureEntry},
-    Basic, Error, ObjectPath, Result, Signature,
+    Basic, Error, ObjectPath, Result, Signature, Value,
 };
 
 /// Our D-Bus deserialization implementation.
@@ -156,6 +156,31 @@ impl<'de, 'f, #[cfg(unix)] F: AsFd, #[cfg(not(unix))] F> Deserializer<'de, 'f, F
         self.common.pos += de.common.pos;
         Ok((de.common.pos, result))
     }
+
+    fn inner_value(&mut self) -> Result<(usize, Value<'de>)> {
+        use serde::Deserialize as _;
+
+        let inner_context = Context::new_dbus(
+            self.common.ctxt.endian(),
+            self.common.ctxt.position() + self.common.pos,
+        );
+
+        let mut de = Deserializer {
+            common: DeserializerCommon {
+                ctxt: inner_context,
+                bytes: subslice(self.common.bytes, self.common.pos..)?,
+                fds: self.common.fds,
+                pos: 0,
+            },
+            parsed_signature: ParsedSignature::from(SignatureEntry::Variant),
+            container_depths: self.container_depths.inc_variant()?,
+        };
+
+        let result = Value::deserialize(&mut de)?;
+
+        self.common.pos += de.common.pos;
+        Ok((de.common.pos, result))
+    }
 }
 
 macro_rules! deserialize_basic {
@@ -165,6 +190,12 @@ macro_rules! deserialize_basic {
             V: Visitor<'de>,
         {
             match self.parsed_signature.next() {
+                Some(SignatureEntry::Variant) => {
+                    let (_, value) = self.inner_value()?;
+                    let concrete_value: $type = zvariant::from_value(value)?;
+                    visitor.$visitor_method(concrete_value)
+                }
+
                 Some(signature) => {
                     if signature.matches::<$type>() {
                         self.common
@@ -296,6 +327,12 @@ impl<'de, 'd, 'f, #[cfg(unix)] F: AsFd, #[cfg(not(unix))] F> de::Deserializer<'d
         self.common.parse_padding(i32::alignment(Format::DBus))?;
 
         match self.parsed_signature.next() {
+            Some(SignatureEntry::Variant) => {
+                let (_, value) = self.inner_value()?;
+                let concrete_value: i32 = zvariant::from_value(value)?;
+                visitor.visit_i32(concrete_value)
+            }
+
             Some(SignatureEntry::I32) => {
                 let v = self
                     .common
@@ -331,12 +368,19 @@ impl<'de, 'd, 'f, #[cfg(unix)] F: AsFd, #[cfg(not(unix))] F> de::Deserializer<'d
         V: Visitor<'de>,
     {
         match self.parsed_signature.next() {
+            Some(SignatureEntry::Variant) => {
+                let (_, value) = self.inner_value()?;
+                let concrete_value: u8 = zvariant::from_value(value)?;
+                visitor.visit_u8(concrete_value)
+            }
+
             Some(SignatureEntry::U8) => visitor.visit_u8(
                 self.common
                     .ctxt
                     .endian()
                     .read_u8(self.common.next_const_size_slice::<u8>()?),
             ),
+
             Some(signature) => Err(Error::SignatureMismatch(
                 signature.into(),
                 format!("`{}`", u8::SIGNATURE_STR),
@@ -394,6 +438,12 @@ impl<'de, 'd, 'f, #[cfg(unix)] F: AsFd, #[cfg(not(unix))] F> de::Deserializer<'d
         V: Visitor<'de>,
     {
         let len = match self.parsed_signature.next() {
+            Some(SignatureEntry::Variant) => {
+                let (_, value) = self.inner_value()?;
+                let concrete_value: String = zvariant::from_value(value)?;
+                return visitor.visit_string(concrete_value);
+            }
+
             Some(SignatureEntry::Signature) => {
                 let len_slice = self.common.next_slice(1)?;
                 len_slice[0] as usize
@@ -560,14 +610,20 @@ impl<'de, 'd, 'f, #[cfg(unix)] F: AsFd, #[cfg(not(unix))] F> de::Deserializer<'d
 
     fn deserialize_enum<V>(
         self,
-        _name: &'static str,
-        _variants: &'static [&'static str],
+        name: &'static str,
+        variants: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
         match self.parsed_signature.next() {
+            Some(SignatureEntry::Variant) => {
+                let (_, value) = self.inner_value()?;
+                let de = value.into_deserializer();
+                de.deserialize_enum(name, variants, visitor)
+            }
+
             Some(SignatureEntry::Struct(fields)) => {
                 self.common.parse_padding(STRUCT_ALIGNMENT_DBUS)?;
 
