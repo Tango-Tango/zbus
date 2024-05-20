@@ -206,9 +206,14 @@ impl<'de> Deserializer<'de> for ValueDeserializer<'de> {
         V: Visitor<'de>,
     {
         match self.value {
+            Value::U32(_) => {
+                visitor.visit_enum(StructureEnumAccess::new(VecDeque::from(vec![self.value])))
+            }
+
             Value::Structure(structure) => {
                 visitor.visit_enum(StructureEnumAccess::new(structure.into_fields().into()))
             }
+
             value => Err(Error::invalid_value(value.unexpected(), &"an enum")),
         }
     }
